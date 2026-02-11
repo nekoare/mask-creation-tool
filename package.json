@@ -1,0 +1,12 @@
+{
+  "name": "com.nekoare.mask-creation-tool",
+  "version": "0.1.0",
+  "displayName": "Mask Creation Tool",
+  "description": "マスクテクスチャ作成・編集ツール。グレースケールマスクの描画、アイランド選択、Undo/Redo機能を提供します。",
+  "unity": "2019.4",
+  "author": {
+    "name": "nekoare"
+  },
+  "dependencies": {},
+  "vpmDependencies": {}
+}

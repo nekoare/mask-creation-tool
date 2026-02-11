@@ -1,0 +1,219 @@
+#pragma kernel CSDrawBrush
+#pragma kernel CSRebuild
+#pragma kernel CSSmudgePickup
+#pragma kernel CSSmudgeApply
+
+Texture2D<float4> BackgroundTex;
+RWTexture2D<float4> PreviewTex;
+RWTexture2D<float4> MaskTex;
+
+int Width;
+int Height;
+int Pos[2];
+int PreviousPos[2];
+
+float BrushValue;
+float EraserStrength;
+int BrushSize;
+int BrushMode; // 0: Pen, 1: Eraser
+
+// 消しゴムスナップショット（ストローク開始時のMaskTexコピー）
+// sRGB無効のRenderTextureとして作成し、Texture2Dでもガンマ変換なしで生値を読む
+Texture2D<float4> SnapshotTex;
+
+// はみ出し防止用クリッピングマスク
+Texture2D<float4> ClipMask;
+uint ClampToIsland; // 0: off, 1: on
+
+// スマッジ用
+RWStructuredBuffer<float> SmudgeBuffer;
+uint SmudgeBrushDiameter;
+float SmudgeStrength;
+
+// MeshDeleterWithTextureから移植
+bool isUpwardVector(float2 a, float2 b) {
+    return b.y - a.y > 0;
+}
+
+bool isDownwardVector(float2 a, float2 b) {
+    return b.y - a.y < 0;
+}
+
+bool isParallel(float2 a, float2 b, float2 c, float2 d) {
+    float ab = (b.y - a.y) / (b.x - a.x);
+    float cd = (d.y - c.y) / (d.x - c.x);
+    return ab == cd;
+}
+
+float mycross(float2 vec1, float2 vec2) {
+    return vec1.x * vec2.y - vec1.y * vec2.x;
+}
+
+bool isCrossLine(float2 a, float2 b, float2 c, float2 d) {
+    return mycross(b - a, c - a) * mycross(b - a, d - a) <= 0 &&
+        mycross(d - c, a - c) * mycross(d - c, b - c) <= 0;
+}
+
+bool isCountUp(float2 a, float2 b, float2 c, float2 d) {
+    return !isParallel(a, b, c, d) &&
+        isCrossLine(a, b, c, d) &&
+        ((isUpwardVector(a, b) && c.y != a.y) ||
+            (isDownwardVector(a, b) && c.y != b.y));
+}
+
+bool isOnLine(float2 a, float2 b, float2 p, float lineSize, float width)
+{
+    float2 q = float2(p.x + width, p.y);
+    float2 ab = a - b;
+    float2 invAB = ab.yx;
+    float2 normalizedInvAB = normalize(invAB);
+
+    float2 p1 = a + normalizedInvAB * float2(1, -1) * lineSize;
+    float2 p2 = a + normalizedInvAB * float2(-1, 1) * lineSize;
+    float2 p3 = b + normalizedInvAB * float2(-1, 1) * lineSize;
+    float2 p4 = b + normalizedInvAB * float2(1, -1) * lineSize;
+
+    int count = 0;
+    if (isCountUp(p1, p2, p, q)) count++;
+    if (isCountUp(p2, p3, p, q)) count++;
+    if (isCountUp(p3, p4, p, q)) count++;
+    if (isCountUp(p4, p1, p, q)) count++;
+
+    return fmod(count, 2) == 1;
+}
+
+[numthreads(32,32,1)]
+void CSDrawBrush(uint2 id : SV_DispatchThreadID)
+{
+    int2 currentPos = int2(Pos[0], Pos[1]);
+
+    // 現在位置の円内チェック
+    if (distance(currentPos, id) <= BrushSize) {
+        // はみ出し防止: クリッピングマスクが有効な場合、マスク外のピクセルをスキップ
+        if (ClampToIsland && ClipMask[id.xy].r < 0.5)
+            return;
+        if (BrushMode == 0) {
+            MaskTex[id.xy] = float4(BrushValue, BrushValue, BrushValue, 1.0);
+        } else {
+            // スナップショットから元値を読むことで、ストローク中の重複適用を防止
+            float original = SnapshotTex[id.xy].r;
+            float erased = lerp(original, 1.0, EraserStrength);
+            MaskTex[id.xy] = float4(erased, erased, erased, 1.0);
+        }
+    }
+
+    if (PreviousPos[0] == -1) return;
+
+    int2 previousPos = int2(PreviousPos[0], PreviousPos[1]);
+
+    // 前回と今回の点を繋いだ線分上だったら塗る
+    if (isOnLine(previousPos.xy, currentPos, id, BrushSize, Width)) {
+        // はみ出し防止: クリッピングマスクが有効な場合、マスク外のピクセルをスキップ
+        if (ClampToIsland && ClipMask[id.xy].r < 0.5)
+            return;
+        if (BrushMode == 0) {
+            MaskTex[id.xy] = float4(BrushValue, BrushValue, BrushValue, 1.0);
+        } else {
+            float original = SnapshotTex[id.xy].r;
+            float erased = lerp(original, 1.0, EraserStrength);
+            MaskTex[id.xy] = float4(erased, erased, erased, 1.0);
+        }
+    }
+}
+
+// スマッジ: ブラシ範囲のマスク値をSmudgeBufferにピックアップ
+[numthreads(32,32,1)]
+void CSSmudgePickup(uint2 id : SV_DispatchThreadID)
+{
+    uint localX = id.x;
+    uint localY = id.y;
+
+    if (localX >= SmudgeBrushDiameter || localY >= SmudgeBrushDiameter)
+        return;
+
+    uint bufIdx = localY * SmudgeBrushDiameter + localX;
+    uint radius = SmudgeBrushDiameter / 2;
+
+    // 円形マスク判定
+    int dx = (int)localX - (int)radius;
+    int dy = (int)localY - (int)radius;
+    if (dx * dx + dy * dy > (int)(radius * radius))
+    {
+        SmudgeBuffer[bufIdx] = -1.0; // 範囲外マーカー
+        return;
+    }
+
+    int2 center = int2(Pos[0], Pos[1]);
+    int texX = center.x + dx;
+    int texY = center.y + dy;
+
+    // テクスチャ境界チェック
+    if (texX < 0 || texX >= Width || texY < 0 || texY >= Height)
+    {
+        SmudgeBuffer[bufIdx] = -1.0;
+        return;
+    }
+
+    SmudgeBuffer[bufIdx] = MaskTex[uint2(texX, texY)].r;
+}
+
+// スマッジ: SmudgeBufferの値をマスクに塗り込み、バッファも更新
+[numthreads(32,32,1)]
+void CSSmudgeApply(uint2 id : SV_DispatchThreadID)
+{
+    uint localX = id.x;
+    uint localY = id.y;
+
+    if (localX >= SmudgeBrushDiameter || localY >= SmudgeBrushDiameter)
+        return;
+
+    uint bufIdx = localY * SmudgeBrushDiameter + localX;
+    uint radius = SmudgeBrushDiameter / 2;
+
+    // 範囲外マーカーならスキップ
+    if (SmudgeBuffer[bufIdx] < 0.0)
+        return;
+
+    int2 center = int2(Pos[0], Pos[1]);
+    int dx = (int)localX - (int)radius;
+    int dy = (int)localY - (int)radius;
+    int texX = center.x + dx;
+    int texY = center.y + dy;
+
+    // テクスチャ境界チェック
+    if (texX < 0 || texX >= Width || texY < 0 || texY >= Height)
+        return;
+
+    // はみ出し防止: クリッピングマスクが有効な場合、マスク外のピクセルをスキップ
+    if (ClampToIsland && ClipMask[uint2(texX, texY)].r < 0.5)
+        return;
+
+    float current = MaskTex[uint2(texX, texY)].r;
+    float buffered = SmudgeBuffer[bufIdx];
+
+    // 中心からの距離に応じてstrengthを減衰（ガウシアン風）
+    float dist = sqrt((float)(dx * dx + dy * dy));
+    float normalizedDist = dist / (float)radius;
+    float falloff = exp(-3.0 * normalizedDist * normalizedDist);
+    float localStrength = SmudgeStrength * falloff;
+
+    // バッファの値と現在値を強度でブレンド
+    float blended = lerp(current, buffered, localStrength);
+    MaskTex[uint2(texX, texY)] = float4(blended, blended, blended, 1.0);
+
+    // バッファも更新（次フレームに持ち越し）
+    SmudgeBuffer[bufIdx] = blended;
+}
+
+/// <summary>
+/// PreviewTextureをBackgroundTex × MaskTexで再構成するカーネル
+/// Import/Undo/Redo後にComposeCompositeから呼ばれる
+/// CSDrawBrushと同じテクセル読み取り方法を使うため、色空間の不一致が起きない
+/// </summary>
+[numthreads(32,32,1)]
+void CSRebuild(uint2 id : SV_DispatchThreadID)
+{
+    float4 bgColor = BackgroundTex[id.xy];
+    float4 maskColor = MaskTex[id.xy];
+    PreviewTex[id.xy] = float4(bgColor.rgb * maskColor.r, 1.0);
+}

@@ -1,0 +1,171 @@
+#pragma kernel CSRasterize
+#pragma kernel CSClear
+#pragma kernel CSExpand
+#pragma kernel CSErode
+
+RWStructuredBuffer<int> Result;
+RWStructuredBuffer<int> ResultOut;
+RWTexture2D<float4> SelectAreaTex;
+
+StructuredBuffer<float4> Triangles; // 3 float4 per triangle (xy position)
+int TriangleCount;
+int Width;
+int Height;
+int ExpansionMargin;
+
+// simple point-in-triangle using barycentric technique
+bool isPointInTriangle(float2 p, float2 a, float2 b, float2 c)
+{
+    float2 v0 = c - a;
+    float2 v1 = b - a;
+    float2 v2 = p - a;
+
+    float dot00 = dot(v0, v0);
+    float dot01 = dot(v0, v1);
+    float dot02 = dot(v0, v2);
+    float dot11 = dot(v1, v1);
+    float dot12 = dot(v1, v2);
+
+    float invDenom = 1.0 / (dot00 * dot11 - dot01 * dot01 + 1e-8);
+    float u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+    float v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+
+    return (u >= 0.0 && v >= 0.0 && (u + v) <= 1.00001);
+}
+
+// 点pと線分ab間の最短距離
+float distanceToSegment(float2 p, float2 a, float2 b)
+{
+    float2 ab = b - a;
+    float len2 = dot(ab, ab);
+    if (len2 < 1e-8)
+        return distance(p, a);
+    float t = saturate(dot(p - a, ab) / len2);
+    float2 proj = a + t * ab;
+    return distance(p, proj);
+}
+
+// ピクセル中心が三角形の辺上にあるか（距離1px以内）
+bool isOnTriangleEdge(float2 p, float2 a, float2 b, float2 c)
+{
+    return distanceToSegment(p, a, b) <= 1.0
+        || distanceToSegment(p, b, c) <= 1.0
+        || distanceToSegment(p, c, a) <= 1.0;
+}
+
+[numthreads(32, 32, 1)]
+void CSRasterize(uint2 id : SV_DispatchThreadID)
+{
+    int xi = (int)id.x;
+    int yi = (int)id.y;
+
+    if (xi >= Width || yi >= Height) return;
+
+    int idx = yi * Width + xi;
+
+    float2 p = float2(xi, yi);
+
+    for (int i = 0; i < TriangleCount; i++)
+    {
+        float4 a = Triangles[i * 3 + 0];
+        float4 b = Triangles[i * 3 + 1];
+        float4 c = Triangles[i * 3 + 2];
+
+        if (isPointInTriangle(p, a.xy, b.xy, c.xy) || isOnTriangleEdge(p, a.xy, b.xy, c.xy))
+        {
+            SelectAreaTex[uint2(xi, yi)] = float4(1, 1, 1, 1);
+            Result[idx] = 1;
+            return;
+        }
+    }
+
+    // not inside any triangle
+    SelectAreaTex[uint2(xi, yi)] = float4(0, 0, 0, 1);
+    Result[idx] = 0;
+}
+
+[numthreads(32, 32, 1)]
+void CSExpand(uint2 id : SV_DispatchThreadID)
+{
+    int xi = (int)id.x;
+    int yi = (int)id.y;
+
+    if (xi >= Width || yi >= Height) return;
+
+    int idx = yi * Width + xi;
+
+    int minX = max(0, xi - ExpansionMargin);
+    int maxX = min(Width - 1, xi + ExpansionMargin);
+    int minY = max(0, yi - ExpansionMargin);
+    int maxY = min(Height - 1, yi + ExpansionMargin);
+
+    for (int y = minY; y <= maxY; y++)
+    {
+        for (int x = minX; x <= maxX; x++)
+        {
+            if (Result[y * Width + x] != 0)
+            {
+                SelectAreaTex[uint2(xi, yi)] = float4(1, 1, 1, 1);
+                ResultOut[idx] = 1;
+                return;
+            }
+        }
+    }
+
+    SelectAreaTex[uint2(xi, yi)] = float4(0, 0, 0, 1);
+    ResultOut[idx] = 0;
+}
+
+// 収縮: 近傍にResult=0のピクセルがあれば自分も0にする
+[numthreads(32, 32, 1)]
+void CSErode(uint2 id : SV_DispatchThreadID)
+{
+    int xi = (int)id.x;
+    int yi = (int)id.y;
+
+    if (xi >= Width || yi >= Height) return;
+
+    int idx = yi * Width + xi;
+
+    // 元が0なら0のまま
+    if (Result[idx] == 0)
+    {
+        SelectAreaTex[uint2(xi, yi)] = float4(0, 0, 0, 1);
+        ResultOut[idx] = 0;
+        return;
+    }
+
+    // 近傍を探索（ExpansionMarginは正の値で渡される）
+    int minX = max(0, xi - ExpansionMargin);
+    int maxX = min(Width - 1, xi + ExpansionMargin);
+    int minY = max(0, yi - ExpansionMargin);
+    int maxY = min(Height - 1, yi + ExpansionMargin);
+
+    for (int y = minY; y <= maxY; y++)
+    {
+        for (int x = minX; x <= maxX; x++)
+        {
+            if (Result[y * Width + x] == 0)
+            {
+                SelectAreaTex[uint2(xi, yi)] = float4(0, 0, 0, 1);
+                ResultOut[idx] = 0;
+                return;
+            }
+        }
+    }
+
+    SelectAreaTex[uint2(xi, yi)] = float4(1, 1, 1, 1);
+    ResultOut[idx] = 1;
+}
+
+[numthreads(32, 32, 1)]
+void CSClear(uint2 id : SV_DispatchThreadID)
+{
+    int xi = (int)id.x;
+    int yi = (int)id.y;
+
+    if (xi >= Width || yi >= Height) return;
+
+    SelectAreaTex[uint2(xi, yi)] = float4(0, 0, 0, 1);
+    Result[yi * Width + xi] = 0;
+}
