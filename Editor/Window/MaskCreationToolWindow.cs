@@ -798,11 +798,26 @@ namespace NekoareMaskTool.Editor
             if (_canvasModel == null)
                 return;
 
-            var defaultName = "CHM_Mask";
+            string defaultName;
             if (!string.IsNullOrEmpty(_outputSlotProperty))
             {
-                // 先頭の "_" を除去してプロパティ名をファイル名に使用
+                // CHM連携 + 出力先指定あり
                 defaultName = "CHM_" + _outputSlotProperty.TrimStart('_');
+            }
+            else if (_externalContext != null)
+            {
+                // CHM連携 + 出力先未指定
+                defaultName = "CHM_Mask";
+            }
+            else if (_canvasModel.BackgroundTexture != null && !string.IsNullOrEmpty(_canvasModel.BackgroundTexture.name))
+            {
+                // 単体起動 + テクスチャあり
+                defaultName = _canvasModel.BackgroundTexture.name + "_Mask";
+            }
+            else
+            {
+                // 単体起動 + テクスチャなし
+                defaultName = "Mask";
             }
 
             var path = MaskImportExporter.ShowExportDialog(defaultName);
