@@ -998,19 +998,8 @@ namespace NekoareMaskTool.Editor
                 _selectedMaterialIndex = context.selectedMaterialIndex;
             }
 
-            // 背景テクスチャ: ソーステクスチャからアトラスを合成
-            if (context.sourceMasks != null && context.sourceMasks.Count > 0)
-            {
-                var atlasBackground = MaskCoordinateTransformer.ComposeAtlasBackground(
-                    context.sourceMasks, resolution);
-                _canvasModel.SetBackgroundTexture(atlasBackground);
-            }
-            else
-            {
-                LoadBackgroundTexture(_selectedMaterialIndex);
-            }
-
             // Rendererをキャンバスビューに設定（UVマップ生成・プレビュー含む）
+            // LoadBackgroundTexture内のSetupScenePreviewが_targetRendererを参照するため、先に設定する
             if (_canvasView != null)
             {
                 // SetTargetRenderer内のGenerateUVMapが正しいSubMeshを使うよう、先にインデックスを設定
@@ -1025,6 +1014,18 @@ namespace NekoareMaskTool.Editor
                 {
                     _canvasView.OverrideUVMesh(context.atlasMesh);
                 }
+            }
+
+            // 背景テクスチャ: ソーステクスチャからアトラスを合成
+            if (context.sourceMasks != null && context.sourceMasks.Count > 0)
+            {
+                var atlasBackground = MaskCoordinateTransformer.ComposeAtlasBackground(
+                    context.sourceMasks, resolution);
+                _canvasModel.SetBackgroundTexture(atlasBackground);
+            }
+            else
+            {
+                LoadBackgroundTexture(_selectedMaterialIndex);
             }
 
             // アイランドセレクターを初期化（アトラスメッシュが提供されていればそれを使用）
