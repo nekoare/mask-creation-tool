@@ -1013,6 +1013,11 @@ namespace NekoareMaskTool.Editor
             // Rendererをキャンバスビューに設定（UVマップ生成・プレビュー含む）
             if (_canvasView != null)
             {
+                // SetTargetRenderer内のGenerateUVMapが正しいSubMeshを使うよう、先にインデックスを設定
+                if (context.selectedMaterialIndex >= 0)
+                {
+                    _canvasView.SetSelectedMaterialIndex(context.selectedMaterialIndex);
+                }
                 _canvasView.SetTargetRenderer(_targetRenderer, _targetMesh, _targetGameObject != null);
 
                 // アトラスUVメッシュが提供されている場合、UVワイヤーフレームをオーバーライド

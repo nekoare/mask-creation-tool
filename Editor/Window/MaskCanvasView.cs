@@ -63,6 +63,15 @@ namespace NekoareMaskTool.Editor
             _drawController = drawController;
         }
 
+        /// <summary>
+        /// UVワイヤーフレーム描画に使用するSubMeshインデックスを設定する
+        /// SetTargetRendererより前に呼ぶこと
+        /// </summary>
+        public void SetSelectedMaterialIndex(int index)
+        {
+            _selectedMaterialIndex = index;
+        }
+
     // UVマップをテクスチャ化してオーバーレイ描画する（Handles毎フレーム描画を回避）
     private Texture2D _uvMapTexture;
 
