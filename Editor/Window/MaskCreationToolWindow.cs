@@ -992,6 +992,12 @@ namespace NekoareMaskTool.Editor
             _undoRedoManager.Clear();
             _undoRedoManager.Initialize(resolution, resolution);
 
+            // マテリアルインデックスの設定
+            if (context.selectedMaterialIndex >= 0)
+            {
+                _selectedMaterialIndex = context.selectedMaterialIndex;
+            }
+
             // 背景テクスチャ: ソーステクスチャからアトラスを合成
             if (context.sourceMasks != null && context.sourceMasks.Count > 0)
             {
@@ -1001,7 +1007,7 @@ namespace NekoareMaskTool.Editor
             }
             else
             {
-                LoadBackgroundTexture();
+                LoadBackgroundTexture(_selectedMaterialIndex);
             }
 
             // Rendererをキャンバスビューに設定（UVマップ生成・プレビュー含む）
@@ -1024,7 +1030,9 @@ namespace NekoareMaskTool.Editor
             if (meshForIslands != null)
             {
                 _islandSelector = new IslandSelector();
-                _islandSelector.Initialize(meshForIslands, resolution, resolution);
+                // 非アトラスモードではselectedMaterialIndexをsubmeshとして使用
+                int submeshForIslands = context.atlasMesh != null ? 0 : _selectedMaterialIndex;
+                _islandSelector.Initialize(meshForIslands, resolution, resolution, submeshForIslands);
 
                 var clipMask = _islandSelector.GetClippingMask();
                 _drawController?.SetClipMask(clipMask);

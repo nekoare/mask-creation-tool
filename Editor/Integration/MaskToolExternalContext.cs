@@ -71,6 +71,12 @@ namespace NekoareMaskTool.Editor
         /// 現在編集中のマスクスロット名（出力先のデフォルト値として使用）
         /// </summary>
         public string currentMaskSlotName;
+
+        /// <summary>
+        /// 初期選択するマテリアルインデックス（SubMesh）
+        /// -1の場合は変更しない（デフォルト）
+        /// </summary>
+        public int selectedMaterialIndex = -1;
     }
 
     /// <summary>
