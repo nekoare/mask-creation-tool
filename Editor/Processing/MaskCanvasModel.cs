@@ -64,12 +64,33 @@ namespace NekoareMaskTool.Editor
 
         /// <summary>
         /// PreviewTextureを背景テクスチャで初期化（MeshDeleterWithTexture方式）
-        /// 背景テクスチャの内容をそのままPreviewTextureにコピーする
+        /// 背景テクスチャからサンプラ設定を継承してPreviewTextureを再生成し、内容をコピーする。
+        /// lilToonのアウトラインパスなどUV範囲外をサンプルするシェーダで、
+        /// wrapMode/filterMode不一致に起因するScene描画のズレを防ぐために必要。
         /// </summary>
         public void InitializePreviewFromBackground()
         {
-            if (_previewTexture == null || _backgroundTexture == null)
+            if (_backgroundTexture == null)
                 return;
+
+            if (_previewTexture != null)
+            {
+                _previewTexture.Release();
+            }
+
+            var readWrite = UnityEditor.PlayerSettings.colorSpace == ColorSpace.Linear
+                ? RenderTextureReadWrite.Linear
+                : RenderTextureReadWrite.Default;
+            _previewTexture = new RenderTexture(_width, _height, 0, RenderTextureFormat.ARGB32, readWrite);
+            _previewTexture.enableRandomWrite = true;
+            _previewTexture.anisoLevel = _backgroundTexture.anisoLevel;
+            _previewTexture.mipMapBias = _backgroundTexture.mipMapBias;
+            _previewTexture.filterMode = _backgroundTexture.filterMode;
+            _previewTexture.wrapMode = _backgroundTexture.wrapMode;
+            _previewTexture.wrapModeU = _backgroundTexture.wrapModeU;
+            _previewTexture.wrapModeV = _backgroundTexture.wrapModeV;
+            _previewTexture.wrapModeW = _backgroundTexture.wrapModeW;
+            _previewTexture.Create();
 
             Graphics.Blit(_backgroundTexture, _previewTexture);
         }

@@ -171,6 +171,7 @@ namespace NekoareMaskTool.Editor
                 _previewMaterial.mainTexture = _model.PreviewTexture;
             }
 
+
             // マテリアルを差し替え
             materials[materialIndex] = _previewMaterial;
             _targetRenderer.sharedMaterials = materials;
