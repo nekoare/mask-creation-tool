@@ -351,6 +351,7 @@ namespace NekoareMaskTool.Editor
                         _canvasModel.Clear();
                         _canvasView?.RefreshComposite();
                         RecordUndoState();
+                        ScheduleDeferredRefresh();
                     }
                 }
 
@@ -1163,24 +1164,9 @@ namespace NekoareMaskTool.Editor
                 return;
             }
 
-            // 読み取り可能な Texture2D に変換
-            var readableTexture = MakeTextureReadable(found);
-            if (readableTexture == null)
-            {
-                _canvasModel.SetBackgroundTexture(null);
-                _canvasView?.RefreshComposite();
-                return;
-            }
-
-            // BackgroundTextureをMaskTexture/PreviewTextureと同じサイズにリサイズ
-            if (readableTexture.width != _canvasModel.Width || readableTexture.height != _canvasModel.Height)
-            {
-                var resized = ResizeTexture(readableTexture, _canvasModel.Width, _canvasModel.Height);
-                Object.DestroyImmediate(readableTexture);
-                readableTexture = resized;
-            }
-
-            _canvasModel.SetBackgroundTexture(readableTexture);
+            // 元のマテリアルテクスチャをそのまま背景として渡す
+            // 読み取り可能コピーやリサイズは不要（Graphics.Blitでサイズ差を自動処理）
+            _canvasModel.SetBackgroundTexture(found, ownsTexture: false);
 
             // PreviewTextureを背景テクスチャで初期化（MeshDeleterWithTexture方式）
             _canvasModel.InitializePreviewFromBackground();
@@ -1195,7 +1181,36 @@ namespace NekoareMaskTool.Editor
             // PreviewTextureを再合成 + UVマップ再生成
             _canvasView?.RefreshComposite();
 
+            // lilToonアウトラインのScene表示で初期化直後にGPU側の中間状態が残るケースへの対処
+            ScheduleDeferredRefresh();
+
             Repaint();
+        }
+
+        /// <summary>
+        /// フレーム跨ぎでRefreshCompositeを再実行する。初期化やClear直後にlilToonアウトライン等の
+        /// Scene表示で残骸が見える問題への対処（stroke+Undo相当の更新を自動で起こす）。
+        /// </summary>
+        private void ScheduleDeferredRefresh()
+        {
+            EditorApplication.delayCall += () =>
+            {
+                if (this == null || _canvasView == null) return;
+                _canvasView.RefreshComposite();
+                Repaint();
+            };
+        }
+
+        private static void CopySamplerSettings(Texture source, Texture dest)
+        {
+            if (source == null || dest == null) return;
+            dest.anisoLevel = source.anisoLevel;
+            dest.mipMapBias = source.mipMapBias;
+            dest.filterMode = source.filterMode;
+            dest.wrapMode = source.wrapMode;
+            dest.wrapModeU = source.wrapModeU;
+            dest.wrapModeV = source.wrapModeV;
+            dest.wrapModeW = source.wrapModeW;
         }
 
         private Texture2D MakeTextureReadable(Texture source)
@@ -1208,6 +1223,7 @@ namespace NekoareMaskTool.Editor
                 Graphics.CopyTexture(t2d, 0, 0, readable, 0, 0);
                 readable.name = t2d.name;
                 readable.Apply();
+                CopySamplerSettings(t2d, readable);
                 return readable;
             }
             else if (source is RenderTexture rt)
@@ -1218,6 +1234,7 @@ namespace NekoareMaskTool.Editor
                 readable.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
                 readable.Apply();
                 RenderTexture.active = prev;
+                CopySamplerSettings(rt, readable);
                 return readable;
             }
             else
@@ -1236,6 +1253,7 @@ namespace NekoareMaskTool.Editor
                 RenderTexture.active = prev;
 
                 RenderTexture.ReleaseTemporary(renderTex);
+                CopySamplerSettings(source, readable);
                 return readable;
             }
         }
@@ -1258,6 +1276,7 @@ namespace NekoareMaskTool.Editor
             RenderTexture.active = prev;
 
             RenderTexture.ReleaseTemporary(rt);
+            CopySamplerSettings(source, resized);
             return resized;
         }
 

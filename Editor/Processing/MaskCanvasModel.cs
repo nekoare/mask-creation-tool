@@ -11,14 +11,15 @@ namespace NekoareMaskTool.Editor
         private int _height;
         private float[] _maskValues;
         private RenderTexture _maskTexture;
-        private Texture2D _backgroundTexture;
+        private Texture _backgroundTexture;
+        private bool _ownsBackgroundTexture;
         private RenderTexture _previewTexture;     // Scene表示用（MeshDeleterWithTexture方式）
 
         public int Width => _width;
         public int Height => _height;
         public float[] MaskValues => _maskValues;
         public RenderTexture MaskTexture => _maskTexture;
-        public Texture2D BackgroundTexture => _backgroundTexture;
+        public Texture BackgroundTexture => _backgroundTexture;
         public RenderTexture PreviewTexture => _previewTexture;
 
         public void Initialize(int width, int height)
@@ -47,6 +48,10 @@ namespace NekoareMaskTool.Editor
             // プレビュー用テクスチャを初期化（MeshDeleterWithTexture方式）
             if (_previewTexture != null)
             {
+                if (RenderTexture.active == _previewTexture)
+                {
+                    RenderTexture.active = null;
+                }
                 _previewTexture.Release();
             }
             _previewTexture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32);
@@ -57,9 +62,15 @@ namespace NekoareMaskTool.Editor
             SyncCpuToGpu();
         }
 
-        public void SetBackgroundTexture(Texture2D texture)
+        public void SetBackgroundTexture(Texture texture, bool ownsTexture = true)
         {
+            // 以前の背景テクスチャを所有していた場合は破棄する
+            if (_backgroundTexture != null && _ownsBackgroundTexture)
+            {
+                Object.DestroyImmediate(_backgroundTexture);
+            }
             _backgroundTexture = texture;
+            _ownsBackgroundTexture = texture != null && ownsTexture;
         }
 
         /// <summary>
@@ -75,14 +86,19 @@ namespace NekoareMaskTool.Editor
 
             if (_previewTexture != null)
             {
+                if (RenderTexture.active == _previewTexture)
+                {
+                    RenderTexture.active = null;
+                }
                 _previewTexture.Release();
             }
 
-            var readWrite = UnityEditor.PlayerSettings.colorSpace == ColorSpace.Linear
-                ? RenderTextureReadWrite.Linear
-                : RenderTextureReadWrite.Default;
-            _previewTexture = new RenderTexture(_width, _height, 0, RenderTextureFormat.ARGB32, readWrite);
-            _previewTexture.enableRandomWrite = true;
+            // 色テクスチャのサンプリングと揃うよう sRGB RT として生成（Default: Linear色空間→sRGB, Gamma→Linear）
+            // enableRandomWrite=true は sRGB フォーマットとGPU側で非互換なことが多く、
+            // Create() がサイレント失敗して未初期化GPUメモリが表示される原因になるため設定しない
+            _previewTexture = new RenderTexture(_width, _height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default);
+            _previewTexture.useMipMap = (_backgroundTexture is Texture2D t2d) && t2d.mipmapCount > 1;
+            _previewTexture.autoGenerateMips = _previewTexture.useMipMap;
             _previewTexture.anisoLevel = _backgroundTexture.anisoLevel;
             _previewTexture.mipMapBias = _backgroundTexture.mipMapBias;
             _previewTexture.filterMode = _backgroundTexture.filterMode;
@@ -91,6 +107,12 @@ namespace NekoareMaskTool.Editor
             _previewTexture.wrapModeV = _backgroundTexture.wrapModeV;
             _previewTexture.wrapModeW = _backgroundTexture.wrapModeW;
             _previewTexture.Create();
+
+            // 未初期化GPUメモリが見えないよう明示的にクリア
+            var prevRT = RenderTexture.active;
+            RenderTexture.active = _previewTexture;
+            GL.Clear(true, true, new Color(0, 0, 0, 1));
+            RenderTexture.active = prevRT;
 
             Graphics.Blit(_backgroundTexture, _previewTexture);
         }
@@ -111,8 +133,12 @@ namespace NekoareMaskTool.Editor
 
             if (_backgroundTexture != null)
             {
-                Object.DestroyImmediate(_backgroundTexture);
+                if (_ownsBackgroundTexture)
+                {
+                    Object.DestroyImmediate(_backgroundTexture);
+                }
                 _backgroundTexture = null;
+                _ownsBackgroundTexture = false;
             }
         }
 
