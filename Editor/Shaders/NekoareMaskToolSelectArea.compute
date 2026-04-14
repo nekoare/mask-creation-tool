@@ -30,7 +30,9 @@ bool isPointInTriangle(float2 p, float2 a, float2 b, float2 c)
     float u = (dot11 * dot02 - dot01 * dot12) * invDenom;
     float v = (dot00 * dot12 - dot01 * dot02) * invDenom;
 
-    return (u >= 0.0 && v >= 0.0 && (u + v) <= 1.00001);
+    // 隣接triangle共有エッジ上のピクセルが浮動小数点誤差でいずれの三角形にも属さないと判定されるのを防ぐため
+    // 微小な負の epsilon を許容する
+    return (u >= -1e-4 && v >= -1e-4 && (u + v) <= 1.0 + 1e-4);
 }
 
 // 点pと線分ab間の最短距離
@@ -63,7 +65,7 @@ void CSRasterize(uint2 id : SV_DispatchThreadID)
 
     int idx = yi * Width + xi;
 
-    float2 p = float2(xi, yi);
+    float2 p = float2(xi + 0.5, yi + 0.5);
 
     for (int i = 0; i < TriangleCount; i++)
     {

@@ -37,6 +37,11 @@ namespace NekoareMaskTool.Editor
         private string _outputSlotProperty;
         private string _outputSlotDisplayName;
 
+        // Sceneクリックでメッシュを直接塗る機能の有効/無効。EditorPrefs に永続化する
+        private const string SCENE_CLICK_ENABLED_PREF_KEY = "NekoareMaskTool.SceneClickEnabled";
+        private bool _sceneClickEnabled;
+        private SceneInputHandler _sceneInputHandler;
+
         // 正方形ボタン用カスタムスタイル（EditorStyles.miniButtonはfixedHeightが固定されているため）
         private GUIStyle _squareButtonStyle;
         private GUIStyle _squareToggleStyle;
@@ -95,12 +100,40 @@ namespace NekoareMaskTool.Editor
             _canvasView.OnIslandClick = (texCoord) => OnIslandSelected(texCoord);
             _canvasView.OnEyedropperPick = (texCoord) => OnEyedropperPicked(texCoord);
 
+            _sceneClickEnabled = EditorPrefs.GetBool(SCENE_CLICK_ENABLED_PREF_KEY, false);
+            _sceneInputHandler = new SceneInputHandler();
+            _sceneInputHandler.SetDependencies(_canvasModel, _drawController, _islandSelector);
+            _sceneInputHandler.OnStrokeComplete = () => RecordUndoState();
+            _sceneInputHandler.OnPaintApplied = () =>
+            {
+                _canvasView?.RefreshComposite();
+                Repaint();
+                SceneView.RepaintAll();
+            };
+            UpdateSceneInputHandlerState();
+
             // 初期状態を記録
             RecordUndoState();
         }
 
+        /// <summary>
+        /// SceneInputHandler の有効状態と対象を最新の状態に揃える
+        /// </summary>
+        private void UpdateSceneInputHandlerState()
+        {
+            if (_sceneInputHandler == null) return;
+            // CHM連携時は外部側がScene表示を管理するため Sceneクリックは無効化する
+            bool effective = _sceneClickEnabled && _externalContext == null;
+            _sceneInputHandler.SetEnabled(effective);
+            _sceneInputHandler.SetTarget(_targetRenderer, _selectedMaterialIndex);
+            _sceneInputHandler.SetIslandSelector(_islandSelector);
+        }
+
         private void OnDisable()
         {
+            _sceneInputHandler?.Dispose();
+            _sceneInputHandler = null;
+
             // 外部ツールにマスクツール終了を通知
             _externalContext?.onMaskToolClosed?.Invoke();
             _externalContext = null;
@@ -246,6 +279,7 @@ namespace NekoareMaskTool.Editor
                         // 作業状態をリセット（旧マテリアルの復元含む）
                         ResetWorkingState();
                         _selectedMaterialIndex = newIndex;
+                        UpdateSceneInputHandlerState();
                         // 新しいマテリアルから背景を読込む
                         LoadBackgroundTexture(_selectedMaterialIndex);
 
@@ -279,6 +313,24 @@ namespace NekoareMaskTool.Editor
                 }
 
                 GUILayout.FlexibleSpace();
+
+                // Sceneクリック有効トグル。CHM連携時は外部側がScene表示を管理するため無効化
+                bool sceneClickAllowed = _externalContext == null;
+                using (new EditorGUI.DisabledScope(!sceneClickAllowed))
+                {
+                    bool newSceneClick = GUILayout.Toggle(
+                        sceneClickAllowed && _sceneClickEnabled,
+                        new GUIContent("Sceneクリック", "Scene上で直接メッシュをクリックして塗る"),
+                        EditorStyles.toolbarButton,
+                        GUILayout.Width(110)
+                    );
+                    if (newSceneClick != _sceneClickEnabled)
+                    {
+                        _sceneClickEnabled = newSceneClick;
+                        EditorPrefs.SetBool(SCENE_CLICK_ENABLED_PREF_KEY, _sceneClickEnabled);
+                        UpdateSceneInputHandlerState();
+                    }
+                }
             }
             EditorGUILayout.EndHorizontal();
         }
@@ -949,6 +1001,8 @@ namespace NekoareMaskTool.Editor
             // Compositeを更新（UV再生成 + 合成）
             _canvasView?.RefreshComposite();
 
+            UpdateSceneInputHandlerState();
+
             // 初期状態を記録
             RecordUndoState();
         }
@@ -1066,6 +1120,8 @@ namespace NekoareMaskTool.Editor
 
             // キャンバス表示を更新
             _canvasView?.RefreshComposite();
+
+            UpdateSceneInputHandlerState();
 
             // 初期状態を記録
             RecordUndoState();
@@ -1287,6 +1343,9 @@ namespace NekoareMaskTool.Editor
                 _canvasView.DisplayColor = _maskDisplayColor;
                 _canvasView.RefreshComposite();
             }
+            // v1.1.3 で対処したScene preview残骸問題はマテリアル/状態切替時に再発しうるため、
+            // 表示色変更でも遅延refreshを発火させる
+            ScheduleDeferredRefresh();
             Repaint();
         }
 
