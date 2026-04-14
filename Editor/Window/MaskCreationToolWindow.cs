@@ -122,11 +122,20 @@ namespace NekoareMaskTool.Editor
         private void UpdateSceneInputHandlerState()
         {
             if (_sceneInputHandler == null) return;
-            // CHM連携時は外部側がScene表示を管理するため Sceneクリックは無効化する
-            bool effective = _sceneClickEnabled && _externalContext == null;
+            // 外部コンテキストがアトラス合成モード（atlasMesh または sourceMasks 使用）の場合は
+            // Scene UV と内部 mask UV の対応が異なるため Sceneクリックは無効化する。
+            // SubMesh指定のみのCHM呼び出し（メッシュカット設定→マスク作成）では有効化できる。
+            bool effective = _sceneClickEnabled && !IsExternalContextAtlasMode();
             _sceneInputHandler.SetEnabled(effective);
             _sceneInputHandler.SetTarget(_targetRenderer, _selectedMaterialIndex);
             _sceneInputHandler.SetIslandSelector(_islandSelector);
+        }
+
+        private bool IsExternalContextAtlasMode()
+        {
+            if (_externalContext == null) return false;
+            return _externalContext.atlasMesh != null
+                || (_externalContext.sourceMasks != null && _externalContext.sourceMasks.Count > 0);
         }
 
         private void OnDisable()
@@ -315,7 +324,7 @@ namespace NekoareMaskTool.Editor
                 GUILayout.FlexibleSpace();
 
                 // Sceneクリック有効トグル。CHM連携時は外部側がScene表示を管理するため無効化
-                bool sceneClickAllowed = _externalContext == null;
+                bool sceneClickAllowed = !IsExternalContextAtlasMode();
                 using (new EditorGUI.DisabledScope(!sceneClickAllowed))
                 {
                     bool newSceneClick = GUILayout.Toggle(
