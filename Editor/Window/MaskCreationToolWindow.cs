@@ -888,10 +888,11 @@ namespace NekoareMaskTool.Editor
             {
                 MaskImportExporter.ExportMask(_canvasModel, path);
 
-                // 出力先が指定されていればコールバックで適用
-                if (!string.IsNullOrEmpty(_outputSlotProperty) && _externalContext?.onMaskApplied != null)
+                // 外部コンテキストにコールバックがあれば保存パスを通知
+                // 出力先未指定 (Submesh モード等) の場合は slotName を空文字列で渡す
+                if (_externalContext?.onMaskApplied != null)
                 {
-                    _externalContext.onMaskApplied.Invoke(path, _outputSlotProperty);
+                    _externalContext.onMaskApplied.Invoke(path, _outputSlotProperty ?? string.Empty);
                 }
             }
         }
